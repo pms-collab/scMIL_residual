@@ -82,7 +82,7 @@ But the **severity classifier does NOT receive $z_s$**.
 Instead it receives a residualized vector:
 
 $$
-\tilde z_s = (I-P)\z_s
+\tilde z_s = (I-P)z_s
 $$
 
 where $P$ is a projector derived from the disease branch prototypes.
