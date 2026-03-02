@@ -128,4 +128,3 @@ python scripts/evaluate.py --run runs/dummy_resid --data data/dummy/bags.npz
 * `notebooks/`          : original development notebooks (archived)
 
 </details>
-```
