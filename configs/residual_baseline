@@ -1,0 +1,29 @@
+seed: 11
+device: cuda
+cap: 4096
+
+model:
+  d_in: 64
+  attn_hidden: 128
+  attn_dropout: 0.1
+  k_prototypes: 3
+  prototype_mode: general  # general | qr
+  prototype_eps: 1.0e-5
+  disease_pool: max   # max | noisy_or
+  severity_head: residual  # residual | gor
+  sev_mlp_hidden: 128
+  sev_mlp_dropout: 0.1
+
+train:
+  epochs: 100
+  batch_size: 8
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  patience: 10
+  stage1_warmup_epochs: 10   # train disease branch only first
+  loss_weights:
+    sick_bce: 1.0
+    sev_bce: 1.0
+
+logging:
+  log_every: 20
