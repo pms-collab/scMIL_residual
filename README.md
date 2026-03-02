@@ -82,7 +82,7 @@ But the **severity classifier does NOT receive $z_s$**.
 Instead it receives a residualized vector:
 
 $$
-\tilde z_s = (I-P)\,z_s
+\tilde z_s = (I-P)\z_s
 $$
 
 where $P$ is a projector derived from the disease branch prototypes.
@@ -160,7 +160,7 @@ $$
 Severity classifier input is **$\tilde z_s$** (not $z_s$):
 
 $$
-p_{\text{sev}\mid\text{sick}} = \sigma\!\left(H_{\text{sev}}(\tilde z_s)\right)
+p_{\text{sev}\mid\text{sick}} = \sigma\left(H_{\text{sev}}(\tilde z_s)\right)
 $$
 
 Interpretation: $p_{\text{sev}\mid\text{sick}}$ is driven by components not explainable by the disease programs, i.e., candidate **de novo severe-specific** evidence.
@@ -201,11 +201,11 @@ $$
 Classifier input:
 
 $$
-z_{\text{prog}}=[\,\tilde z_s\;\|\;a_{\text{keep}}\,]
+z_{\text{prog}}=[\tilde z_s|a_{\text{keep}}]
 $$
 
 $$
-p_{\text{sev}\mid\text{sick}}=\sigma\!\left(H_{\text{sev}}(z_{\text{prog}})\right)
+p_{\text{sev}\mid\text{sick}}=\sigma\left(H_{\text{sev}}(z_{\text{prog}})\right)
 $$
 
 > **Status:** Experimental. Risks include gate collapse and overfitting under small-N / noisy labels.  
