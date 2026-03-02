@@ -1,0 +1,35 @@
+seed: 11
+device: cuda
+cap: 4096
+
+model:
+  d_in: 64
+  attn_hidden: 128
+  attn_dropout: 0.1
+  k_prototypes: 3
+  prototype_mode: general  # general | qr
+  prototype_eps: 1.0e-5
+  disease_pool: max
+  severity_head: gor
+  sev_mlp_hidden: 128
+  sev_mlp_dropout: 0.1
+  gor:
+    beta_init_logit: -2.0
+    beta_entropy_weight: 0.01
+    beta_l2_weight: 0.001
+    beta_min: 0.0
+    beta_max: 1.0
+
+train:
+  epochs: 100
+  batch_size: 8
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  patience: 10
+  stage1_warmup_epochs: 10
+  loss_weights:
+    sick_bce: 1.0
+    sev_bce: 1.0
+
+logging:
+  log_every: 20
