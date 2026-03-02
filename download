@@ -1,0 +1,22 @@
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.dist/
+build/
+
+# notebooks
+.ipynb_checkpoints/
+
+# runs / artifacts
+runs/
+data/
+*.npz
+*.npy
+*.pt
+*.pth
+*.ckpt
+
+# OS
+.DS_Store
+Thumbs.db
