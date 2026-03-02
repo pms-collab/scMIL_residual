@@ -3,15 +3,15 @@
 
 This repository implements a bag/donor-level framework for progressive disease staging
 (**Control / Mild / Severe**) from scRNA-seq, designed for **severe-specific subpopulation/state discovery**
-through cell-level evidence scoring.
+via cell-level evidence scoring.
 
 > **Data and pretrained embeddings are NOT included.**  
-> Users must obtain the dataset and run embeddings (e.g., **scVI**) themselves.  
-> This repo provides the **modeling, training, evaluation, and evidence-extraction** pipeline.
+> Users must obtain the dataset and generate embeddings (e.g., **scVI**) themselves.  
+> This repo provides the **modeling + training + evaluation + evidence extraction** pipeline.
 
 ---
 
-## 1) Problem
+## 0) Problem
 
 Progressive disease modeling with scRNA-seq is hard because:
 
@@ -24,142 +24,154 @@ Progressive disease modeling with scRNA-seq is hard because:
 
 ---
 
-## 2) Hypothesis: Severe = amplified mild-shared + de novo severe-specific
+## 1) Hypothesis: Severe = amplified mild-shared + de novo severe-specific
 
 We model the severe-stage signal as:
 - **Amplified mild-shared signal** (shared disease program with larger magnitude), plus
 - **De novo severe-specific signal** (additional program not explainable by mild-shared components).
 
-Two-stage strategy:
+This motivates two complementary objectives:
 
-- **Stage A (Residual baseline)**: emphasize specificity for **de novo** severe evidence by removing mild/disease-aligned components.
-- **Stage B (GOR, experimental)**: partially retain mild/disease-aligned components to capture **amplification** effects.
+- **Objective A (de novo discovery)**: isolate severity evidence that is *orthogonal* to mild/disease-common structure.
+- **Objective B (amplification-aware progression)**: allow partial reuse of mild/disease-aligned structure when it reflects *amplification* rather than confounding.
 
 ---
 
-## 3) Step 0) Embedding (scVI; optional pipeline module)
+## 2) System overview (two-layer pipeline)
 
-We treat scVI as a feature extractor producing per-cell latent embeddings.
+### Layer 1 — Representation (cell → embedding)
+We assume each cell has an embedding \(h_i \in \mathbb{R}^d\).
+Embeddings can be produced by scVI (recommended) or any comparable encoder.
 
-- Input: raw scRNA-seq counts + batch/site covariates (if available)
-- Output: per-cell embeddings \( h_i \in \mathbb{R}^d \)
-
-scVI is used to reduce technical confounders before MIL aggregation.
+- Input: raw scRNA-seq counts (+ batch/site covariates if available)
+- Output: per-cell embeddings \(h_i\)
 
 > This repo may include scVI scripts under `pipelines/scvi/`, but ships no data/weights.
 
+### Layer 2 — Modeling (embedding bags → staging + evidence)
+Given a bag (sample/donor) \(X=\{h_i\}_{i=1}^{n}\), we predict C/M/S and compute cell-level evidence.
+
+This layer contains:
+- **Dual-branch attention MIL** (cell → bag summaries)
+- **Disease-subspace learning** (K disease programs)
+- **Residualized severity classification** (classifier sees residual, not raw severity summary)
+- **Hierarchical/ordinal staging** (Severe ⊆ Sick)
+- **Evidence extraction** (attribution-based; planned)
+
 ---
 
-## 4) Core modeling idea: Dual-branch attention MIL + residualized severity classifier
+## 3) Modeling core: Dual-branch attention MIL + residualized severity classifier
 
-### 4.1 Attention-based MIL (bag representation from cells)
-Given a bag \(X=\{h_i\}_{i=1}^{n}\) of cell embeddings, we build bag-level representations via **attention-based MIL**:
+### 3.1 Attention-based MIL (cell → bag)
+We build a bag representation using attention-based MIL:
 \[
 z = \sum_{i=1}^{n}\alpha_i h_i,\quad \alpha = \mathrm{softmax}(\cdot)
 \]
 
-We use two independent attention MIL branches on the same bag:
+We use two independent branches on the same bag:
 
-- **Disease branch (D)** produces \(z_d\): enriched for onset/disease-common evidence.
-- **Severity branch (S)** produces \(z_s\): enriched for progression-related evidence.
+- **Disease branch (D)**: \(z_d\) (onset / disease-common evidence)
+- **Severity branch (S)**: \(z_s\) (progression evidence candidate)
 
-> MIL reference: Ilse, Tomczak, Welling, *Attention-based Deep Multiple Instance Learning*, 2018. :contentReference[oaicite:0]{index=0}
+> MIL reference: Ilse, Tomczak, Welling, *Attention-based Deep Multiple Instance Learning*, 2018.
 
-### 4.2 Critical design constraint (what is fed to the severity classifier)
-A key design choice is:
+### 3.2 The non-negotiable constraint (what the severity classifier is allowed to see)
+The severity branch **does** aggregate cells into a bag vector \(z_s\).
+But the **severity classifier does NOT receive \(z_s\)**.
 
-- Severity branch input is still cell embeddings \(h_i\).
-- The branch aggregates cells into a bag vector \(z_s\).
-- **However, the severity classifier does NOT take \(z_s\) directly.**
-  It takes a residualized vector:
-  \[
-  \tilde z_s = (I-P)z_s
-  \]
-  where \(P\) is derived from the disease branch prototypes.
+Instead it receives the residualized vector:
+\[
+\tilde z_s = (I-P)\,z_s
+\]
+where \(P\) is a projector derived from the disease branch.
 
-This forces severity prediction to rely on components **orthogonal** to the learned disease/mild-common subspace.
+This turns severity prediction into: “explain severe using components orthogonal to disease/mild-common structure.”
 
 ---
 
-## 5) Stage A: Residual Hypothesis baseline (de novo severe-specific)
+## 4) Module A: Disease branch = learn disease programs and sick probability
 
-### Step 1) Disease branch learns a K-program disease subspace and pools to \(p_{\text{sick}}\)
-
-**Disease MIL aggregation**
+### 4.1 Disease aggregation
 \[
 z_d=\sum_i \alpha^{(d)}_i h_i
 \]
 
-**K disease programs (prototypes)**
-We represent heterogeneity via \(K\) prototype weight vectors:
+### 4.2 K disease programs (prototypes) and pooling into \(p_{\text{sick}}\)
+To represent heterogeneity, define \(K\) prototype weight vectors:
 \[
 W=[w_1;\dots;w_K]\in\mathbb{R}^{K\times d},\quad w_k\in\mathbb{R}^{d}
 \]
 
-**Per-program logits and probabilities**
+Compute per-program logits and probabilities:
 \[
 s_k = w_k^\top z_d + b_k,\qquad p_k=\sigma(s_k),\quad k=1,\dots,K
 \]
 
-**Pooling across subtypes to obtain \(p_{\text{sick}}\)**
-We interpret “sick” as activation of **any** disease program:
+Pool across programs to obtain “sick” probability (OR over subtypes):
 
 - **Max pooling (default)**
 \[
 p_{\text{sick}}=\max_{k} p_k
 \]
-This is the explicit “OR over subtypes”: a bag is sick if it aligns strongly with at least one disease program.
+Interpretation: a bag is sick if it strongly matches *any* disease program.
 
 - **Noisy-OR (optional)**
 \[
 p_{\text{sick}} = 1 - \prod_{k=1}^{K}(1-p_k)
 \]
-This is a smooth OR alternative that aggregates evidence across multiple moderately active programs.
+Interpretation: multiple moderately active programs can accumulate evidence smoothly.
 
-**Hard orthonormality (recommended)**
+### 4.3 Hard orthonormality (recommended) and projection operator
 To make projection well-defined, we construct \(W\) via differentiable QR:
 
 - Learn \( V \in \mathbb{R}^{d\times K} \)
 - \( Q,R=\mathrm{QR}(V)\), \(Q\in\mathbb{R}^{d\times K}\)
 - \( W = Q^\top \in\mathbb{R}^{K\times d} \)
 
-This yields a valid projector:
+Then define the projector:
 \[
 P = W^\top W,\quad P^2=P,\quad P^\top=P
 \]
 
-### Step 2) Severity branch aggregates cells to \(z_s\) (still cell → bag)
+---
+
+## 5) Module B: Severity branch = aggregate, residualize, then classify
+
+### 5.1 Severity aggregation (cell → bag)
+Severity branch forms a bag-level summary:
 \[
 z_s=\sum_i \alpha^{(s)}_i h_i
 \]
 
-### Step 3) Residualize *before* severity classification (classifier input is \(\tilde z_s\))
+### 5.2 Residualization occurs at the **classifier input**
+Remove disease/mild-aligned components from the bag vector \(z_s\):
 \[
 \tilde z_s = (I-P)z_s = z_s - Pz_s
 \]
 
-**Crucially, the severity classifier receives only \(\tilde z_s\), not \(z_s\):**
+Severity classifier input is **\(\tilde z_s\)** (not \(z_s\)):
 \[
 p_{\text{sev}\mid\text{sick}} = \sigma\!\left(H_{\text{sev}}(\tilde z_s)\right)
 \]
 
-Interpretation: \(p_{\text{sev}\mid\text{sick}}\) is driven by components that cannot be explained by the disease/mild-common subspace, i.e., candidate **de novo severe-specific** evidence.
+Interpretation: \(p_{\text{sev}\mid\text{sick}}\) is driven by components not explainable by the disease programs,
+i.e., candidate **de novo severe-specific** evidence.
 
 ---
 
-## 6) Stage B: GOR (Gated Orthogonal Residual; experimental)
+## 6) Module C: (Experimental) GOR = amplification-aware severity input
 
 Residual baseline prioritizes de novo evidence by discarding aligned components \(Pz_s\).
 If severe includes **amplification of mild-shared programs**, discarding \(Pz_s\) may reduce sensitivity.
 
-GOR augments the severity classifier input with a **gated** portion of the aligned component.
+GOR augments the severity classifier input with a gated portion of the aligned component.
 
 Decompose:
 \[
 z_{\parallel}=Pz_s,\quad \tilde z_s=(I-P)z_s
 \]
 
-A practical parameterization uses coefficients on disease programs:
+Use coefficients on disease programs:
 \[
 a = z_s W^\top \in \mathbb{R}^K,\quad z_{\parallel}=aW
 \]
@@ -180,12 +192,12 @@ z_{\text{prog}}=[\,\tilde z_s\;\|\;a_{\text{keep}}\,]
 p_{\text{sev}\mid\text{sick}}=\sigma\!\left(H_{\text{sev}}(z_{\text{prog}})\right)
 \]
 
-> **Status:** Experimental extension. Risks include gate collapse and overfitting under small-N / noisy labels.  
-> Report GOR results separately from the residual baseline.
+> **Status:** Experimental. Risks include gate collapse and overfitting under small-N / noisy labels.  
+> Report GOR separately from the residual baseline.
 
 ---
 
-## 7) Hierarchical/ordinal staging (Control/Mild/Severe)
+## 7) Module D: Staging head (Control/Mild/Severe) with ordinal structure
 
 We enforce “Severe ⊆ Sick” by composing probabilities:
 
@@ -195,77 +207,60 @@ p(M)=p_{\text{sick}}(1-p_{\text{sev}\mid\text{sick}}),\quad
 p(S)=p_{\text{sick}}p_{\text{sev}\mid\text{sick}}
 \]
 
-This guarantees:
+Guarantee:
 \[
-p(S) \le p_{\text{sick}}
+p(S)\le p_{\text{sick}}
 \]
 
 ### Optional: CORAL ordinal head
-Instead of product-gating, we can treat C/M/S as an ordinal target and use **CORAL** (Consistent Rank Logits):
+Instead of product composition, treat C/M/S as ordinal and use **CORAL** (Consistent Rank Logits).
 
-- Predict rank probabilities \(P(Y>0)\) and \(P(Y>1)\) with rank consistency.
-- Convert them to class probabilities:
+- Predict rank probabilities \(p_1=P(Y>0)\), \(p_2=P(Y>1)\) with rank consistency.
+- Convert to class probabilities:
   \[
   P(Y=0)=1-p_1,\quad P(Y=1)=p_1-p_2,\quad P(Y=2)=p_2
   \]
 
-> CORAL reference: Cao, Mirjalili, Raschka, *Rank consistent ordinal regression for neural networks with application to age estimation*, Pattern Recognition Letters (2020). :contentReference[oaicite:1]{index=1}
+> CORAL reference: Cao, Mirjalili, Raschka, *Rank consistent ordinal regression for neural networks with application to age estimation*, Pattern Recognition Letters (2020).
 
 ---
 
 ## 8) Cell-level evidence: attribution over attention (planned)
 
 We do **not** treat attention weights as faithful explanations (**attention ≠ attribution**).
-Attention indicates “where the model focuses” but not “what caused the logit”.
+Attention indicates “where the model focuses,” not “what caused the logit.”
 
-Therefore, cell-level contribution is quantified via attribution-style proxies tied to output logits:
+Planned evidence measures (logit-tied attribution proxies):
 
 - **Integrated Gradients (IG)** from cell embeddings \(h_i\) to:
   - sick logit, and/or
   - sev|sick logit (preferred for severe evidence)
-- Alternative logit-contribution proxies:
+- Alternative contribution proxies:
   - gradient×input,
   - leave-one-out / logit-delta approximations (when feasible)
 
 Planned outputs:
 - ranked cells by attribution score,
 - severe-enriched candidate subpopulations,
-- agreement/disagreement between attention vs attribution rankings.
+- agreement/disagreement between attention ranking and attribution ranking.
 
 ---
 
-## 9) Repository contents (expected)
+## 9) Results (current status)
 
-- `pipelines/scvi/`: scVI training/export scripts (optional; no data/weights shipped)
-- `src/`: core modeling code
-  - attention MIL branches (disease/severity)
-  - disease prototypes \(W\), projector \(P=W^\top W\)
-  - residualized severity classifier input \(\tilde z_s=(I-P)z_s\)
-  - experimental GOR variants
-  - ordinal composition + optional CORAL head
-- `scripts/`: train/eval/diagnostics
-- `docs/`: method + input format + reproduction notes
-- Standardized run artifacts:
-  - `metrics.json`, `predictions.csv`, confusion matrices
-  - (optional) beta diagnostics, attribution summaries
-
----
-
-## 10) Results (current status)
-
-Observed behavior in the current experimental setup:
+Observed behavior in the current setup:
 - validation performance can be strong, but **Val → Test drop** can occur in 3-class staging.
 - conditional severity metrics may be more stable than 3-class accuracy, consistent with:
   - small sample size,
-  - proxy/noisy severity labels (e.g., hospitalization-based definitions),
-  - remaining confounding.
+  - proxy/noisy severity labels,
+  - residual confounding.
 
 Interpretation:
 - treat this framework primarily as a **mechanistic probe** for evidence discovery, not yet a final generalizable staging model.
 
 ---
 
-## 11) Limitations
+## 10) Limitations
 
 - **Small-N vs high-dimensional embeddings** (bag-level donors limited).
 - **Label noise / proxy severity** can cap generalization.
@@ -274,7 +269,7 @@ Interpretation:
 
 ---
 
-## 12) Next steps
+## 11) Next steps
 
 - Stronger leakage audits (donor overlap, class balance reports, split sensitivity).
 - Domain invariance objectives (adversarial site removal / MMD / calibration).
@@ -283,18 +278,18 @@ Interpretation:
 
 ---
 
-## 13) Citation / Acknowledgements
+## 12) Citation / Acknowledgements
 
 - Dataset: Ren et al. (COVID-19 scRNA-seq). Users must obtain data from the original source.
 - Embedding: scVI / scvi-tools.
-- MIL: Ilse, Tomczak, Welling (2018), Attention-based Deep Multiple Instance Learning. :contentReference[oaicite:2]{index=2}
-- CORAL: Cao, Mirjalili, Raschka (2020), Rank consistent ordinal regression for neural networks. :contentReference[oaicite:3]{index=3}
+- MIL: Ilse, Tomczak, Welling (2018), Attention-based Deep Multiple Instance Learning.
+- CORAL: Cao, Mirjalili, Raschka (2020), Rank consistent ordinal regression for neural networks.
 
 ---
 
-## 14) Quickstart (dummy run)
+## 13) Quickstart (dummy run)
 
-> This will be enabled once scripts are added. Intended interface:
+> Enabled once scripts are added. Intended interface:
 
 1) Generate dummy bags:
 `python scripts/make_dummy_data.py --out data/dummy`
