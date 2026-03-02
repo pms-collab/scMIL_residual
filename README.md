@@ -48,7 +48,7 @@ Embeddings can be produced by scVI (recommended) or any comparable encoder.
 > This repo may include scVI scripts under `pipelines/scvi/`, but ships no data/weights.
 
 ### Layer 2 — Modeling (embedding bags → staging + evidence)
-Given a bag (sample/donor) $X=\{h_i\}_{i=1}^{n}$, we predict C/M/S and compute cell-level evidence.
+Given a bag $X=\{h_i\}_{i=1}^{n}$, we predict C/M/S and compute cell-level evidence.
 
 This layer contains:
 - Dual-branch attention MIL (cell → bag summaries)
